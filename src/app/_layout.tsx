@@ -4,6 +4,7 @@ import { useColorScheme } from 'react-native';
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import AppTabs from '@/components/app-tabs';
 import { AuthGate } from '@/components/auth-gate';
+import { CoachOverlay } from '@/components/coach-overlay';
 import { AuthProvider } from '@/contexts/auth-context';
 import { BodyStatsProvider } from '@/contexts/body-stats-context';
 import { ProfileProvider } from '@/contexts/profile-context';
@@ -21,6 +22,7 @@ export default function TabLayout() {
               <AuthGate>
                 <AppTabs />
               </AuthGate>
+              <CoachOverlay />
             </BodyStatsProvider>
           </ProfileProvider>
         </AuthProvider>

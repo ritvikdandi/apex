@@ -2,6 +2,8 @@ import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -23,9 +25,214 @@ import {
   estimateIngredientMacros,
   getUserIngredients,
   searchIngredients,
+  updateUserIngredient,
   type IngredientResult,
   type UserIngredient,
 } from '@/lib/ingredients';
+
+// ─── Expandable Ingredient Row ───────────────────────────────────────────────
+
+type IngredientRowProps = {
+  item: UserIngredient;
+  isExpanded: boolean;
+  onToggle: () => void;
+  onEdit: (item: UserIngredient) => void;
+  onDelete: (id: string) => void;
+  palette: AppPalette;
+  styles: ReturnType<typeof createStyles>;
+};
+
+function IngredientRow({ item, isExpanded, onToggle, onEdit, onDelete, palette, styles }: IngredientRowProps) {
+  const anim = useRef(new Animated.Value(isExpanded ? 1 : 0)).current;
+
+  useEffect(() => {
+    Animated.timing(anim, {
+      toValue: isExpanded ? 1 : 0,
+      duration: 200,
+      useNativeDriver: false,
+    }).start();
+  }, [isExpanded, anim]);
+
+  const maxHeight = anim.interpolate({ inputRange: [0, 1], outputRange: [0, 180] });
+  const opacity = anim;
+
+  return (
+    <View style={styles.ingredientCard}>
+      <Pressable
+        onPress={onToggle}
+        style={({ pressed }) => [styles.ingredientHeader, pressed && styles.rowPressed]}>
+        <View style={styles.ingredientInfo}>
+          <Text style={styles.ingredientName}>{item.name}</Text>
+          {item.brand ? (
+            <Text style={styles.ingredientBrand}>{item.brand}</Text>
+          ) : item.caloriesPerServing != null ? (
+            <Text style={styles.ingredientMacroSummary}>
+              {Math.round(item.caloriesPerServing)} cal · {Math.round(item.proteinGPerServing ?? 0)}p ·{' '}
+              {Math.round(item.carbsGPerServing ?? 0)}c · {Math.round(item.fatGPerServing ?? 0)}f
+            </Text>
+          ) : null}
+        </View>
+        <Text style={[styles.chevron, isExpanded && styles.chevronOpen]}>›</Text>
+      </Pressable>
+
+      <Animated.View style={[styles.expandedSection, { maxHeight, opacity, overflow: 'hidden' }]}>
+        <View style={styles.expandedInner}>
+          {/* Macro grid */}
+          {item.caloriesPerServing != null && (
+            <View style={styles.macroGrid}>
+              <MacroCell label="Calories" value={`${Math.round(item.caloriesPerServing)}`} unit="kcal" palette={palette} />
+              <MacroCell label="Protein" value={`${Math.round(item.proteinGPerServing ?? 0)}`} unit="g" palette={palette} />
+              <MacroCell label="Carbs" value={`${Math.round(item.carbsGPerServing ?? 0)}`} unit="g" palette={palette} />
+              <MacroCell label="Fat" value={`${Math.round(item.fatGPerServing ?? 0)}`} unit="g" palette={palette} />
+            </View>
+          )}
+
+          {item.servingSize && (
+            <Text style={styles.servingSize}>Per {item.servingSize}</Text>
+          )}
+
+          {/* Action buttons */}
+          <View style={styles.expandedActions}>
+            <Pressable
+              onPress={() => onEdit(item)}
+              style={({ pressed }) => [styles.editButton, pressed && styles.rowPressed]}>
+              <Text style={styles.editButtonLabel}>Edit</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => onDelete(item.id)}
+              style={({ pressed }) => [styles.deleteButton, pressed && styles.rowPressed]}>
+              <Text style={styles.deleteButtonLabel}>Delete</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Animated.View>
+    </View>
+  );
+}
+
+function MacroCell({ label, value, unit, palette }: { label: string; value: string; unit: string; palette: AppPalette }) {
+  return (
+    <View style={{ flex: 1, alignItems: 'center', gap: 2 }}>
+      <Text style={{ fontSize: 18, fontWeight: '800', color: palette.text }}>{value}</Text>
+      <Text style={{ fontSize: 11, fontWeight: '600', color: palette.accent }}>{unit}</Text>
+      <Text style={{ fontSize: 10, fontWeight: '600', color: palette.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 }}>{label}</Text>
+    </View>
+  );
+}
+
+// ─── Edit Modal ───────────────────────────────────────────────────────────────
+
+type EditModalProps = {
+  item: UserIngredient | null;
+  visible: boolean;
+  onSave: (id: string, patch: Partial<Omit<UserIngredient, 'id'>>) => Promise<void>;
+  onClose: () => void;
+  palette: AppPalette;
+  styles: ReturnType<typeof createStyles>;
+};
+
+function EditIngredientModal({ item, visible, onSave, onClose, palette, styles }: EditModalProps) {
+  const [calories, setCalories] = useState('');
+  const [protein, setProtein] = useState('');
+  const [carbs, setCarbs] = useState('');
+  const [fat, setFat] = useState('');
+  const [servingSize, setServingSize] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    if (item) {
+      setCalories(String(Math.round(item.caloriesPerServing ?? 0)));
+      setProtein(String(Math.round(item.proteinGPerServing ?? 0)));
+      setCarbs(String(Math.round(item.carbsGPerServing ?? 0)));
+      setFat(String(Math.round(item.fatGPerServing ?? 0)));
+      setServingSize(item.servingSize ?? '');
+    }
+  }, [item]);
+
+  const handleSave = async () => {
+    if (!item) return;
+    setIsSaving(true);
+    await onSave(item.id, {
+      caloriesPerServing: Number(calories) || 0,
+      proteinGPerServing: Number(protein) || 0,
+      carbsGPerServing: Number(carbs) || 0,
+      fatGPerServing: Number(fat) || 0,
+      servingSize: servingSize.trim() || null,
+    });
+    setIsSaving(false);
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={styles.modalBackdrop} onPress={onClose}>
+        <Pressable style={styles.modalCard} onPress={() => {}}>
+          <Text style={styles.modalTitle}>{item?.name ?? ''}</Text>
+
+          <View style={styles.modalRow}>
+            <MacroInputField label="Calories" value={calories} onChangeText={setCalories} palette={palette} styles={styles} />
+            <MacroInputField label="Protein (g)" value={protein} onChangeText={setProtein} palette={palette} styles={styles} />
+          </View>
+          <View style={styles.modalRow}>
+            <MacroInputField label="Carbs (g)" value={carbs} onChangeText={setCarbs} palette={palette} styles={styles} />
+            <MacroInputField label="Fat (g)" value={fat} onChangeText={setFat} palette={palette} styles={styles} />
+          </View>
+
+          <Text style={styles.modalLabel}>Serving Size</Text>
+          <TextInput
+            value={servingSize}
+            onChangeText={setServingSize}
+            placeholder="e.g. 100g, 1 cup"
+            placeholderTextColor={palette.textSecondary}
+            style={styles.modalInput}
+            returnKeyType="done"
+          />
+
+          <View style={styles.modalActions}>
+            <Pressable
+              onPress={onClose}
+              style={({ pressed }) => [styles.modalCancelBtn, pressed && { opacity: 0.7 }]}>
+              <Text style={styles.modalCancelLabel}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              onPress={handleSave}
+              disabled={isSaving}
+              style={({ pressed }) => [styles.modalSaveBtn, pressed && { opacity: 0.8 }]}>
+              {isSaving ? (
+                <ActivityIndicator color={palette.accentText} />
+              ) : (
+                <Text style={styles.modalSaveLabel}>Save</Text>
+              )}
+            </Pressable>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+function MacroInputField({ label, value, onChangeText, palette, styles }: {
+  label: string;
+  value: string;
+  onChangeText: (v: string) => void;
+  palette: AppPalette;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  return (
+    <View style={{ flex: 1 }}>
+      <Text style={styles.modalLabel}>{label}</Text>
+      <TextInput
+        value={value}
+        onChangeText={onChangeText}
+        keyboardType="number-pad"
+        style={styles.modalInput}
+        returnKeyType="next"
+        placeholderTextColor={palette.textSecondary}
+      />
+    </View>
+  );
+}
+
+// ─── Main Screen ──────────────────────────────────────────────────────────────
 
 export default function PantryScreen() {
   const { palette } = useAppTheme();
@@ -42,6 +249,9 @@ export default function PantryScreen() {
   const [selected, setSelected] = useState<IngredientResult | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [editingItem, setEditingItem] = useState<UserIngredient | null>(null);
 
   const blurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -152,7 +362,19 @@ export default function PantryScreen() {
   const handleDelete = (id: string) => {
     if (!user) return;
     setIngredients((current) => current.filter((item) => item.id !== id));
+    if (expandedId === id) setExpandedId(null);
     deleteUserIngredient(user.id, id);
+  };
+
+  const handleToggleExpand = (id: string) => {
+    setExpandedId((current) => (current === id ? null : id));
+  };
+
+  const handleSaveEdit = async (id: string, patch: Partial<Omit<UserIngredient, 'id'>>) => {
+    if (!user) return;
+    await updateUserIngredient(user.id, id, patch);
+    setEditingItem(null);
+    loadIngredients();
   };
 
   return (
@@ -231,25 +453,16 @@ export default function PantryScreen() {
 
           <View style={styles.listSection}>
             {ingredients.map((item) => (
-              <View key={item.id} style={styles.ingredientRow}>
-                <View style={styles.ingredientInfo}>
-                  <Text style={styles.ingredientName}>{item.name}</Text>
-                  {item.caloriesPerServing != null && (
-                    <Text style={styles.ingredientMacros}>
-                      {Math.round(item.caloriesPerServing)}cal · {Math.round(item.proteinGPerServing ?? 0)}p
-                      · {Math.round(item.carbsGPerServing ?? 0)}c · {Math.round(item.fatGPerServing ?? 0)}f
-                      {item.servingSize ? ` per ${item.servingSize}` : ''}
-                    </Text>
-                  )}
-                </View>
-                <Pressable onPress={() => handleDelete(item.id)} hitSlop={Spacing.two}>
-                  <SymbolView
-                    name={{ ios: 'xmark.circle.fill', android: 'cancel', web: 'cancel' }}
-                    tintColor={palette.error}
-                    size={20}
-                  />
-                </Pressable>
-              </View>
+              <IngredientRow
+                key={item.id}
+                item={item}
+                isExpanded={expandedId === item.id}
+                onToggle={() => handleToggleExpand(item.id)}
+                onEdit={setEditingItem}
+                onDelete={handleDelete}
+                palette={palette}
+                styles={styles}
+              />
             ))}
 
             {!isLoading && ingredients.length === 0 && (
@@ -258,6 +471,15 @@ export default function PantryScreen() {
           </View>
         </ScrollView>
       </SafeAreaView>
+
+      <EditIngredientModal
+        item={editingItem}
+        visible={editingItem !== null}
+        onSave={handleSaveEdit}
+        onClose={() => setEditingItem(null)}
+        palette={palette}
+        styles={styles}
+      />
     </View>
   );
 }
@@ -398,14 +620,20 @@ const createStyles = (palette: AppPalette) =>
     listSection: {
       gap: Spacing.two,
     },
-    ingredientRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
+    // Ingredient card (collapsed + expanded)
+    ingredientCard: {
       backgroundColor: palette.surface,
       borderRadius: Spacing.three,
+      overflow: 'hidden',
+    },
+    ingredientHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
       padding: Spacing.three,
-      gap: Spacing.three,
+      gap: Spacing.two,
+    },
+    rowPressed: {
+      opacity: 0.75,
     },
     ingredientInfo: {
       flex: 1,
@@ -416,10 +644,73 @@ const createStyles = (palette: AppPalette) =>
       fontWeight: 700,
       color: palette.text,
     },
-    ingredientMacros: {
+    ingredientBrand: {
       fontSize: 13,
       fontWeight: 500,
       color: palette.textSecondary,
+    },
+    ingredientMacroSummary: {
+      fontSize: 13,
+      fontWeight: 500,
+      color: palette.textSecondary,
+    },
+    chevron: {
+      fontSize: 20,
+      fontWeight: 600,
+      color: palette.textSecondary,
+      transform: [{ rotate: '0deg' }],
+    },
+    chevronOpen: {
+      transform: [{ rotate: '90deg' }],
+    },
+    // Expanded section
+    expandedSection: {},
+    expandedInner: {
+      paddingHorizontal: Spacing.three,
+      paddingBottom: Spacing.three,
+      gap: Spacing.three,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: palette.divider,
+      paddingTop: Spacing.three,
+    },
+    macroGrid: {
+      flexDirection: 'row',
+      gap: Spacing.two,
+    },
+    servingSize: {
+      fontSize: 13,
+      fontWeight: 500,
+      color: palette.textSecondary,
+      marginTop: -Spacing.two,
+    },
+    expandedActions: {
+      flexDirection: 'row',
+      gap: Spacing.two,
+    },
+    editButton: {
+      flex: 1,
+      alignItems: 'center',
+      paddingVertical: Spacing.two,
+      borderRadius: 999,
+      borderWidth: 1.5,
+      borderColor: palette.accent,
+    },
+    editButtonLabel: {
+      fontSize: 14,
+      fontWeight: 700,
+      color: palette.accent,
+    },
+    deleteButton: {
+      flex: 1,
+      alignItems: 'center',
+      paddingVertical: Spacing.two,
+      borderRadius: 999,
+      backgroundColor: palette.error,
+    },
+    deleteButtonLabel: {
+      fontSize: 14,
+      fontWeight: 700,
+      color: '#FFFFFF',
     },
     emptyText: {
       fontSize: 14,
@@ -427,5 +718,75 @@ const createStyles = (palette: AppPalette) =>
       color: palette.textSecondary,
       textAlign: 'center',
       marginTop: Spacing.five,
+    },
+    // Edit modal
+    modalBackdrop: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.6)',
+      justifyContent: 'flex-end',
+    },
+    modalCard: {
+      backgroundColor: palette.surface,
+      borderTopLeftRadius: 20,
+      borderTopRightRadius: 20,
+      padding: Spacing.four,
+      gap: Spacing.three,
+      paddingBottom: Spacing.six,
+    },
+    modalTitle: {
+      fontSize: 20,
+      fontWeight: 700,
+      color: palette.text,
+    },
+    modalRow: {
+      flexDirection: 'row',
+      gap: Spacing.two,
+    },
+    modalLabel: {
+      fontSize: 12,
+      fontWeight: 600,
+      color: palette.textSecondary,
+      textTransform: 'uppercase',
+      letterSpacing: 0.8,
+      marginBottom: -Spacing.one,
+    },
+    modalInput: {
+      backgroundColor: palette.field,
+      borderRadius: Spacing.two,
+      paddingVertical: Spacing.two,
+      paddingHorizontal: Spacing.three,
+      fontSize: 16,
+      fontWeight: 500,
+      color: palette.text,
+      ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : null),
+    },
+    modalActions: {
+      flexDirection: 'row',
+      gap: Spacing.two,
+      marginTop: Spacing.one,
+    },
+    modalCancelBtn: {
+      flex: 1,
+      alignItems: 'center',
+      paddingVertical: Spacing.three,
+      borderRadius: 999,
+      backgroundColor: palette.field,
+    },
+    modalCancelLabel: {
+      fontSize: 15,
+      fontWeight: 600,
+      color: palette.text,
+    },
+    modalSaveBtn: {
+      flex: 1,
+      alignItems: 'center',
+      paddingVertical: Spacing.three,
+      borderRadius: 999,
+      backgroundColor: palette.accent,
+    },
+    modalSaveLabel: {
+      fontSize: 15,
+      fontWeight: 700,
+      color: palette.accentText,
     },
   });

@@ -80,6 +80,23 @@ export async function callClaudeWithWebSearch(
   );
 }
 
+export async function callClaudeWithMessages(
+  messages: { role: 'user' | 'assistant'; content: string }[],
+  systemPrompt: string,
+  maxTokens: number,
+  label = 'callClaudeWithMessages'
+): Promise<string> {
+  return postToClaude(
+    {
+      model: MODEL,
+      max_tokens: maxTokens,
+      system: systemPrompt,
+      messages,
+    },
+    label
+  );
+}
+
 // Strips markdown code fences and attempts to recover from truncated JSON
 // responses by trimming back to the last complete structure.
 export function parseJsonFromClaude<T>(raw: string): T | null {

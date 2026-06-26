@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Circle, Svg } from 'react-native-svg';
 
@@ -9,7 +19,19 @@ import { BottomTabInset, MaxContentWidth, Spacing, TopOverlayInset } from '@/con
 import { useAuth } from '@/contexts/auth-context';
 import { useProfile } from '@/contexts/profile-context';
 import { useAppTheme } from '@/contexts/theme-context';
-import { addWaterLog, defaultWaterGoalOz, getTodayWaterLogs, resetTodayWaterLogs, type WaterLogEntry } from '@/lib/water';
+import {
+  addWaterLog,
+  defaultWaterGoalOz,
+  getTodayWaterLogs,
+  resetTodayWaterLogs,
+  type WaterLogEntry,
+} from '@/lib/water';
+import {
+  addWaterBottle,
+  deleteWaterBottle,
+  getWaterBottles,
+  type WaterBottle,
+} from '@/lib/water-bottles';
 
 const QUICK_AMOUNTS_OZ = [8, 16, 24];
 const RING_SIZE = 240;
@@ -36,6 +58,12 @@ export default function WaterScreen() {
   const [isLogging, setIsLogging] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  const [bottles, setBottles] = useState<WaterBottle[]>([]);
+  const [showAddBottle, setShowAddBottle] = useState(false);
+  const [bottleName, setBottleName] = useState('');
+  const [bottleSize, setBottleSize] = useState('');
+  const [isSavingBottle, setIsSavingBottle] = useState(false);
+
   const goalOz = defaultWaterGoalOz(profile.weightLb);
 
   const loadEntries = useCallback(() => {
@@ -46,9 +74,15 @@ export default function WaterScreen() {
     });
   }, [user]);
 
+  const loadBottles = useCallback(() => {
+    if (!user) return;
+    getWaterBottles(user.id).then(setBottles);
+  }, [user]);
+
   useEffect(() => {
     loadEntries();
-  }, [loadEntries]);
+    loadBottles();
+  }, [loadEntries, loadBottles]);
 
   const todayTotalOz = useMemo(() => entries.reduce((sum, entry) => sum + entry.amountOz, 0), [entries]);
   const progress = goalOz > 0 ? Math.min(1, todayTotalOz / goalOz) : 0;
@@ -87,6 +121,27 @@ export default function WaterScreen() {
     setIsLogging(false);
   };
 
+  const handleSaveBottle = async () => {
+    const name = bottleName.trim();
+    const size = Number(bottleSize);
+    if (!user || !name || !Number.isFinite(size) || size <= 0) return;
+    setIsSavingBottle(true);
+    const { error } = await addWaterBottle(user.id, name, size);
+    if (!error) {
+      setBottleName('');
+      setBottleSize('');
+      setShowAddBottle(false);
+      loadBottles();
+    }
+    setIsSavingBottle(false);
+  };
+
+  const handleDeleteBottle = async (id: string) => {
+    if (!user) return;
+    await deleteWaterBottle(user.id, id);
+    loadBottles();
+  };
+
   return (
     <View style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
@@ -96,7 +151,11 @@ export default function WaterScreen() {
           </View>
         )}
 
-        <View style={styles.content}>
+        <ScrollView
+          style={styles.content}
+          contentContainerStyle={styles.contentInner}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled">
           <Text style={styles.title}>Water</Text>
 
           <View style={styles.ringSection}>
@@ -138,22 +197,61 @@ export default function WaterScreen() {
             </View>
           )}
 
-          <Text style={styles.sectionLabel}>Quick Add</Text>
-          <View style={styles.quickRow}>
-            {QUICK_AMOUNTS_OZ.map((amount) => (
-              <Pressable
-                key={amount}
-                onPress={() => handleLog(amount)}
-                disabled={isLogging}
-                style={({ pressed }) => [
-                  styles.quickCard,
-                  pressed && styles.buttonPressed,
-                  isLogging && styles.buttonDisabled,
-                ]}>
-                <Text style={styles.quickLabel}>+{amount} oz</Text>
-              </Pressable>
-            ))}
-          </View>
+          {/* Quick Add or My Bottles depending on whether bottles exist */}
+          {bottles.length === 0 ? (
+            <>
+              <View style={styles.sectionRow}>
+                <Text style={styles.sectionLabel}>Quick Add</Text>
+                <Pressable onPress={() => setShowAddBottle(true)}>
+                  <Text style={styles.addBottleLink}>+ My Bottles</Text>
+                </Pressable>
+              </View>
+              <View style={styles.quickRow}>
+                {QUICK_AMOUNTS_OZ.map((amount) => (
+                  <Pressable
+                    key={amount}
+                    onPress={() => handleLog(amount)}
+                    disabled={isLogging}
+                    style={({ pressed }) => [
+                      styles.quickCard,
+                      pressed && styles.buttonPressed,
+                      isLogging && styles.buttonDisabled,
+                    ]}>
+                    <Text style={styles.quickLabel}>+{amount} oz</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </>
+          ) : (
+            <>
+              <View style={styles.sectionRow}>
+                <Text style={styles.sectionLabel}>My Bottles</Text>
+                <Pressable onPress={() => setShowAddBottle(true)}>
+                  <Text style={styles.addBottleLink}>+ Add</Text>
+                </Pressable>
+              </View>
+              <View style={styles.quickRow}>
+                {bottles.map((bottle) => (
+                  <Pressable
+                    key={bottle.id}
+                    onPress={() => handleLog(bottle.sizeOz)}
+                    onLongPress={() => handleDeleteBottle(bottle.id)}
+                    disabled={isLogging}
+                    style={({ pressed }) => [
+                      styles.bottleCard,
+                      pressed && styles.buttonPressed,
+                      isLogging && styles.buttonDisabled,
+                    ]}>
+                    <Text style={styles.bottleName} numberOfLines={1}>
+                      {bottle.name}
+                    </Text>
+                    <Text style={styles.quickLabel}>+{bottle.sizeOz} oz</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <Text style={styles.hintText}>Long press a bottle to remove it</Text>
+            </>
+          )}
 
           <Text style={styles.sectionLabel}>Custom Amount</Text>
           <View style={styles.customRow}>
@@ -175,7 +273,11 @@ export default function WaterScreen() {
                 (isLogging || !customAmount.trim()) && styles.buttonDisabled,
                 pressed && styles.buttonPressed,
               ]}>
-              {isLogging ? <ActivityIndicator color={palette.accentText} /> : <Text style={styles.addLabel}>Add</Text>}
+              {isLogging ? (
+                <ActivityIndicator color={palette.accentText} />
+              ) : (
+                <Text style={styles.addLabel}>Add</Text>
+              )}
             </Pressable>
           </View>
 
@@ -185,8 +287,66 @@ export default function WaterScreen() {
             style={({ pressed }) => [styles.resetButton, pressed && styles.buttonPressed]}>
             <Text style={styles.resetLabel}>Reset Today</Text>
           </Pressable>
-        </View>
+        </ScrollView>
       </SafeAreaView>
+
+      {/* Add Bottle Modal */}
+      <Modal
+        visible={showAddBottle}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowAddBottle(false)}>
+        <Pressable style={styles.modalBackdrop} onPress={() => setShowAddBottle(false)}>
+          <Pressable style={styles.modalCard} onPress={() => {}}>
+            <Text style={styles.modalTitle}>Add Bottle</Text>
+
+            <Text style={styles.modalLabel}>Name</Text>
+            <TextInput
+              value={bottleName}
+              onChangeText={setBottleName}
+              placeholder="e.g. Hydro Flask, Big Jug"
+              placeholderTextColor={palette.textSecondary}
+              style={styles.modalInput}
+              autoFocus
+              returnKeyType="next"
+            />
+
+            <Text style={styles.modalLabel}>Size (oz)</Text>
+            <TextInput
+              value={bottleSize}
+              onChangeText={setBottleSize}
+              placeholder="e.g. 32"
+              placeholderTextColor={palette.textSecondary}
+              keyboardType="number-pad"
+              style={styles.modalInput}
+              returnKeyType="done"
+              onSubmitEditing={handleSaveBottle}
+            />
+
+            <View style={styles.modalActions}>
+              <Pressable
+                onPress={() => setShowAddBottle(false)}
+                style={({ pressed }) => [styles.modalCancel, pressed && styles.buttonPressed]}>
+                <Text style={styles.modalCancelLabel}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={handleSaveBottle}
+                disabled={isSavingBottle || !bottleName.trim() || !bottleSize.trim()}
+                style={({ pressed }) => [
+                  styles.modalSave,
+                  (!bottleName.trim() || !bottleSize.trim()) && styles.buttonDisabled,
+                  pressed && styles.buttonPressed,
+                ]}>
+                {isSavingBottle ? (
+                  <ActivityIndicator color={palette.accentText} />
+                ) : (
+                  <Text style={styles.modalSaveLabel}>Save</Text>
+                )}
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -214,8 +374,11 @@ const createStyles = (palette: AppPalette) =>
     },
     content: {
       flex: 1,
+    },
+    contentInner: {
       gap: Spacing.three,
       paddingTop: Spacing.six,
+      paddingBottom: Spacing.four,
     },
     title: {
       fontSize: 34,
@@ -265,6 +428,11 @@ const createStyles = (palette: AppPalette) =>
       fontWeight: 600,
       color: palette.accentText,
     },
+    sectionRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
     sectionLabel: {
       fontSize: 13,
       fontWeight: 700,
@@ -272,12 +440,24 @@ const createStyles = (palette: AppPalette) =>
       textTransform: 'uppercase',
       color: palette.textSecondary,
     },
+    addBottleLink: {
+      fontSize: 13,
+      fontWeight: 700,
+      color: palette.accent,
+    },
+    hintText: {
+      fontSize: 12,
+      color: palette.textSecondary,
+      marginTop: -Spacing.two,
+    },
     quickRow: {
       flexDirection: 'row',
+      flexWrap: 'wrap',
       gap: Spacing.two,
     },
     quickCard: {
       flex: 1,
+      minWidth: 80,
       alignItems: 'center',
       justifyContent: 'center',
       paddingVertical: Spacing.four,
@@ -288,6 +468,22 @@ const createStyles = (palette: AppPalette) =>
       fontSize: 17,
       fontWeight: 800,
       color: palette.accent,
+    },
+    bottleCard: {
+      flex: 1,
+      minWidth: 80,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: Spacing.three,
+      paddingHorizontal: Spacing.two,
+      borderRadius: Spacing.three,
+      backgroundColor: palette.surface,
+      gap: Spacing.one,
+    },
+    bottleName: {
+      fontSize: 13,
+      fontWeight: 600,
+      color: palette.text,
     },
     customRow: {
       flexDirection: 'row',
@@ -330,5 +526,71 @@ const createStyles = (palette: AppPalette) =>
     },
     buttonPressed: {
       opacity: 0.85,
+    },
+    // Modal styles
+    modalBackdrop: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.6)',
+      justifyContent: 'flex-end',
+    },
+    modalCard: {
+      backgroundColor: palette.surface,
+      borderTopLeftRadius: 20,
+      borderTopRightRadius: 20,
+      padding: Spacing.four,
+      gap: Spacing.three,
+      paddingBottom: Spacing.six,
+    },
+    modalTitle: {
+      fontSize: 20,
+      fontWeight: 700,
+      color: palette.text,
+      marginBottom: Spacing.one,
+    },
+    modalLabel: {
+      fontSize: 13,
+      fontWeight: 600,
+      color: palette.textSecondary,
+      textTransform: 'uppercase',
+      letterSpacing: 1,
+      marginBottom: -Spacing.two,
+    },
+    modalInput: {
+      backgroundColor: palette.field,
+      borderRadius: Spacing.two,
+      paddingVertical: Spacing.three,
+      paddingHorizontal: Spacing.three,
+      fontSize: 16,
+      color: palette.text,
+      ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : null),
+    },
+    modalActions: {
+      flexDirection: 'row',
+      gap: Spacing.two,
+      marginTop: Spacing.two,
+    },
+    modalCancel: {
+      flex: 1,
+      alignItems: 'center',
+      paddingVertical: Spacing.three,
+      borderRadius: 999,
+      backgroundColor: palette.field,
+    },
+    modalCancelLabel: {
+      fontSize: 15,
+      fontWeight: 600,
+      color: palette.text,
+    },
+    modalSave: {
+      flex: 1,
+      alignItems: 'center',
+      paddingVertical: Spacing.three,
+      borderRadius: 999,
+      backgroundColor: palette.accent,
+    },
+    modalSaveLabel: {
+      fontSize: 15,
+      fontWeight: 700,
+      color: palette.accentText,
     },
   });

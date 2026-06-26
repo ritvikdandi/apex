@@ -226,3 +226,30 @@ export async function deleteUserIngredient(userId: string, id: string): Promise<
   }
   return { error: null };
 }
+
+export async function updateUserIngredient(
+  userId: string,
+  id: string,
+  patch: Partial<Omit<UserIngredient, 'id'>>
+): Promise<{ error: string | null }> {
+  const update: Record<string, unknown> = {};
+  if (patch.name !== undefined) update.name = patch.name;
+  if (patch.brand !== undefined) update.brand = patch.brand;
+  if (patch.servingSize !== undefined) update.serving_size = patch.servingSize;
+  if (patch.caloriesPerServing !== undefined) update.calories_per_serving = patch.caloriesPerServing;
+  if (patch.proteinGPerServing !== undefined) update.protein_g_per_serving = patch.proteinGPerServing;
+  if (patch.carbsGPerServing !== undefined) update.carbs_g_per_serving = patch.carbsGPerServing;
+  if (patch.fatGPerServing !== undefined) update.fat_g_per_serving = patch.fatGPerServing;
+
+  const { error } = await supabase
+    .from('user_ingredients')
+    .update(update)
+    .eq('id', id)
+    .eq('user_id', userId);
+
+  if (error) {
+    console.log('[Ingredients] update error:', error.message);
+    return { error: error.message };
+  }
+  return { error: null };
+}
