@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Animated,
   Dimensions,
@@ -74,7 +74,9 @@ export function CoachOverlay() {
     if (!user) return;
 
     const paid = await checkIsPaid(user.id);
+    console.log('[Coach] checkIsPaid →', paid, 'userId:', user.id);
     if (!paid) {
+      console.log('[Coach] paywall triggered — is_paid is explicitly false');
       setShowPaywall(true);
       return;
     }
@@ -83,19 +85,24 @@ export function CoachOverlay() {
     backdropAnim.setValue(0);
     setIsOpen(true);
 
-    Animated.parallel([
-      Animated.spring(slideAnim, {
-        toValue: 0,
-        tension: 80,
-        friction: 12,
-        useNativeDriver,
-      }),
-      Animated.timing(backdropAnim, {
-        toValue: 1,
-        duration: 200,
-        useNativeDriver,
-      }),
-    ]).start();
+    // Defer animation start until after the Animated.View has mounted in the
+    // re-render triggered by setIsOpen(true). Starting immediately would race
+    // the native driver on iOS/Android and leave the panel stuck off-screen.
+    requestAnimationFrame(() => {
+      Animated.parallel([
+        Animated.spring(slideAnim, {
+          toValue: 0,
+          tension: 80,
+          friction: 12,
+          useNativeDriver,
+        }),
+        Animated.timing(backdropAnim, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver,
+        }),
+      ]).start();
+    });
   }, [user, slideAnim, backdropAnim, useNativeDriver]);
 
   const closeOverlay = useCallback(() => {

@@ -134,9 +134,22 @@ export async function checkIsPaid(userId: string): Promise<boolean> {
       .select('is_paid')
       .eq('id', userId)
       .maybeSingle();
-    if (error) return true; // Column not added yet — allow access
-    return data?.is_paid === true;
-  } catch {
+
+    // Allow access on any DB error (column not yet added, RLS issue, etc.)
+    if (error) {
+      console.log('[Coach] checkIsPaid query error (allowing access):', error.message);
+      return true;
+    }
+
+    // Allow access when no profile row exists or is_paid is null / not set.
+    // Only block when is_paid is explicitly set to false.
+    if (data === null || data.is_paid === null || data.is_paid === undefined) {
+      return true;
+    }
+
+    return data.is_paid !== false;
+  } catch (err) {
+    console.log('[Coach] checkIsPaid unexpected error (allowing access):', err);
     return true;
   }
 }
